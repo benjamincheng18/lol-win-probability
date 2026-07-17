@@ -4,6 +4,7 @@ import time
 import requests
 import pandas as pd
 from dotenv import load_dotenv
+from collections import deque
 
 load_dotenv()
 API_KEY = os.getenv("RIOT_API_KEY")
@@ -12,6 +13,7 @@ REGION_PLATFORM = "kr"   # league-v4, summoner-v4 use platform routing
 REGION_ROUTING = "asia"  # match-v5 uses regional routing
 RAW_DIR = "data/raw"
 MANIFEST_PATH = "data/processed/manifest.csv"
+CHECKPOINT_PATH = "data/processed/match_ids_checkpoint.json"
 
 
 def get_seed_puuids(queue="RANKED_SOLO_5x5"):
@@ -64,8 +66,6 @@ def safe_request(url, params=None, max_retries=5):
     print(f"Max retries exceeded for {url}")
     return None
 
-        
-
 
 def fetch_and_cache_match(match_id):
     """Fetch match detail + timeline, cache both as raw JSON. Skip if already cached or on failure."""
@@ -73,7 +73,8 @@ def fetch_and_cache_match(match_id):
     timeline_path = f"{RAW_DIR}/{match_id}_timeline.json"
 
     if os.path.exists(detail_path) and os.path.exists(timeline_path):
-        return
+        with open(detail_path) as f:
+            return json.load(f)
 
     match_url = f"https://{REGION_ROUTING}.api.riotgames.com/lol/match/v5/matches/{match_id}"
     match_detail = safe_request(match_url)
@@ -91,39 +92,107 @@ def fetch_and_cache_match(match_id):
         json.dump(match_detail, f)
     with open(timeline_path, "w") as f:
         json.dump(timeline, f)
+        
+    return match_detail    
 
 
-def snowball_match_ids(seed_puuids, target_count=5000, matches_per_player=20):
-    """
-    Expand from seed players to target_count unique match IDs by:
-    1. Pulling match IDs for each seed puuid
-    2. Pulling match detail to discover new puuids (other 9 participants)
-    3. Repeating with newly discovered puuids until target_count reached
-    Returns: set of match IDs
-    """
-    # TODO: implement the snowball loop
-    # Hint: use a queue/set of "puuids to process" and a set of "already processed puuids" to avoid re-crawling the same player
-    # Hint: use a set (not list) for match_ids to naturally dedupe
-    # Hint: this is the function where checkpointing matters most — consider saving progress every N matches
-    pass
+def load_checkpoint():
+    """Return (match_ids set, processed_puuids set) from disk, or empty sets if none."""
+    if not os.path.exists(CHECKPOINT_PATH):
+        return set(), set()
+    with open(CHECKPOINT_PATH) as f:
+        state = json.load(f)
+    return set(state["match_ids"]), set(state["processed_puuids"])
+
+
+def snowball_match_ids(seed_puuids, target_count=5000, matches_per_player=20,
+                       checkpoint_every=100, match_ids=None, processed_puuids=None):
+    to_process = deque(seed_puuids)
+    processed_puuids = processed_puuids or set()
+    match_ids = match_ids or set()
+
+    while len(match_ids) < target_count and to_process:
+        puuid = to_process.popleft()
+        if puuid in processed_puuids:
+            continue
+        processed_puuids.add(puuid)
+
+        new_ids = get_match_ids_for_puuid(puuid, count=matches_per_player)
+
+        for match_id in new_ids:
+            if match_id in match_ids:
+                continue
+            match_ids.add(match_id)
+
+            detail = fetch_and_cache_match(match_id)
+            if detail is None:
+                continue  # fetch failed, can't discover new puuids from it
+
+            for participant_puuid in detail["metadata"]["participants"]:
+                if participant_puuid not in processed_puuids:
+                    to_process.append(participant_puuid)
+
+            if len(match_ids) % checkpoint_every == 0:
+                with open(CHECKPOINT_PATH, "w") as f:
+                    json.dump({
+                        "match_ids": list(match_ids),
+                        "processed_puuids": list(processed_puuids),
+                    }, f)
+                print(f"Checkpoint: {len(match_ids)} matches collected")
+
+            if len(match_ids) >= target_count:
+                break
+
+    return match_ids
 
 
 def build_manifest(match_ids):
     """
-    Given a list of match IDs (already cached via fetch_and_cache_match),
-    build a flat manifest dataframe: match_id, patch, queue_id, duration, winner, timestamp
-    Save to MANIFEST_PATH, appending/checkpointing as it goes.
+    Given match IDs (already cached via fetch_and_cache_match), build a flat
+    manifest dataframe and save to MANIFEST_PATH.
     """
-    # TODO: for each match_id, load its cached detail JSON, extract the manifest fields
-    # Hint: relevant fields live under detail["info"] — gameVersion (patch), queueId, gameDuration, and
-    #        teams' "win" field under info["teams"] to get the winner
-    pass
+    rows = []
+
+    for match_id in match_ids:
+        detail_path = f"{RAW_DIR}/{match_id}_detail.json"
+        try:
+            with open(detail_path) as f:
+                detail = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Skipping {match_id} — {type(e).__name__}")
+            continue
+
+        info = detail["info"]
+        winner = next((t["teamId"] for t in info["teams"] if t["win"]), None)
+
+        rows.append({
+            "match_id": match_id,
+            "patch": info["gameVersion"],
+            "queue_id": info["queueId"],
+            "duration": info["gameDuration"],
+            "winner_team": winner,
+        })
+
+    manifest = pd.DataFrame(rows)
+    os.makedirs(os.path.dirname(MANIFEST_PATH), exist_ok=True)
+    manifest.to_csv(MANIFEST_PATH, index=False)
+    print(f"Manifest built: {len(manifest)} matches")
+    return manifest
 
 
 if __name__ == "__main__":
-    seed_puuids = get_seed_puuids()
-    match_ids = snowball_match_ids(seed_puuids, target_count=5000)
-    for mid in match_ids:
-        fetch_and_cache_match(mid)
-        time.sleep(1.2)  # crude pacing under 100 req/2min; refine once safe_request has real backoff
-    manifest = build_manifest(match_ids)
+    os.makedirs(RAW_DIR, exist_ok=True)
+
+    match_ids, processed_puuids = load_checkpoint()
+    if match_ids:
+        print(f"Resuming from checkpoint: {len(match_ids)} matches, {len(processed_puuids)} puuids processed")
+
+    seeds = get_seed_puuids()
+    match_ids = snowball_match_ids(
+        seeds,
+        target_count=5000,
+        match_ids=match_ids,
+        processed_puuids=processed_puuids,
+    )
+
+    build_manifest(match_ids)
