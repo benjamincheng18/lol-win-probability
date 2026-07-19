@@ -42,7 +42,7 @@ def safe_request(url, params=None, max_retries=5):
 
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=10)
         except requests.exceptions.RequestException as e:
             print(f"Request error: {e}")
             time.sleep(2 ** attempt)  # backoff even on network errors
@@ -51,7 +51,7 @@ def safe_request(url, params=None, max_retries=5):
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 429:
-            wait = int(response.headers.get("Retry-After", 2 ** attempt))
+            wait = min(int(response.headers.get("Retry-After", 2 ** attempt)), 120)
             print(f"Rate limited, waiting {wait}s (attempt {attempt+1}/{max_retries})")
             time.sleep(wait)
         elif response.status_code in (403, 401):
