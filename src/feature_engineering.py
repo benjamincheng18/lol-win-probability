@@ -50,7 +50,6 @@ def update_objective_counts(events, counts):
             if e.get("buildingType") != "TOWER_BUILDING":
                 continue                      # skip inhibitors
             counts["tower_diff"] += -1 if e["teamId"] == 100 else 1
-
     return counts
 
 
@@ -87,7 +86,6 @@ def process_match(match_id, winner_team):
             "won": won,
         }
         rows.append(row)
-
     return rows
 
 

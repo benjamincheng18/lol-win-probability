@@ -92,7 +92,6 @@ def fetch_and_cache_match(match_id):
         json.dump(match_detail, f)
     with open(timeline_path, "w") as f:
         json.dump(timeline, f)
-        
     return match_detail    
 
 
@@ -142,7 +141,6 @@ def snowball_match_ids(seed_puuids, target_count=5000, matches_per_player=20,
 
             if len(match_ids) >= target_count:
                 break
-
     return match_ids
 
 
