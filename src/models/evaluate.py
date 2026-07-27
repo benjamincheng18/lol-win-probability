@@ -8,6 +8,7 @@ from sklearn.calibration import calibration_curve
 
 MODEL_DIR = "data/processed/models"
 FIG_DIR = "reports/figures"
+FEATURES_PATH = "data/processed/features.csv"
 
 FEATURE_COLS = [
     "minute", "gold_diff", "xp_diff", "level_diff", "cs_diff",
@@ -95,6 +96,63 @@ def feature_importance(xgb_model, feature_names):
     fi = fi.sort_values("importance", ascending=False)
     print(fi.to_string(index=False))
     return fi
+
+
+def logloss_by_minute_table(preds):
+    preds = preds.copy()
+    preds["bucket"] = preds["minute"].clip(upper=36)
+    buckets, ll_list = [], []
+    for b, group in preds.groupby("bucket"):
+        buckets.append(b)
+        ll_list.append(log_loss(group["y_true"], group["y_prob"], labels=[0, 1]))
+    return pd.DataFrame({"bucket": buckets, "log_loss": ll_list})
+
+
+def compare_models(preds_dict):
+    """
+    preds_dict: {model_name: preds_df}. Overlay per-minute log loss for all models.
+    """
+    plt.figure(figsize=(9, 6))
+    for name, preds in preds_dict.items():
+        table = logloss_by_minute_table(preds)
+        plt.plot(table["bucket"], table["log_loss"], marker="o", markersize=4, label=name)
+
+    plt.axhline(0.693, color="grey", linestyle=":", label="coinflip (0.693)")
+    plt.title("Log loss by minute — model comparison")
+    plt.xlabel("Game minute (36 = 36+)")
+    plt.ylabel("Log loss")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"{FIG_DIR}/model_comparison_by_minute.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def run_comparison():
+    import joblib, torch, numpy as np
+    from src.models.lstm_model import WinProbLSTM
+    from src.models.sequence_data import build_sequences, scale_sequences, make_splits
+    from src.models.train_lstm import lstm_predictions
+    # baseline preds
+    logreg = joblib.load(f"{MODEL_DIR}/logistic.joblib")
+    scaler = joblib.load(f"{MODEL_DIR}/scaler.joblib")
+    xgb = joblib.load(f"{MODEL_DIR}/xgboost.joblib")
+    X_test = pd.read_csv(f"{MODEL_DIR}/X_test.csv")
+    y_test = pd.read_csv(f"{MODEL_DIR}/y_test.csv").squeeze()
+
+    log_preds = compute_predictions(logreg, X_test, y_test, X_test["minute"], scaler=scaler)
+    xgb_preds = compute_predictions(xgb, X_test, y_test, X_test["minute"], scaler=None)
+
+    # lstm preds (same test matches)
+    df = pd.read_csv(FEATURES_PATH)
+    X, y, mask, match_ids = build_sequences(df)
+    X = scale_sequences(X, mask, scaler)
+    splits = make_splits(X, y, mask, match_ids)
+    model = WinProbLSTM()
+    model.load_state_dict(torch.load(f"{MODEL_DIR}/lstm.pt"))
+    lstm_preds = lstm_predictions(model, splits["test"])
+
+    compare_models({"logistic": log_preds, "xgboost": xgb_preds, "lstm": lstm_preds})
+    print("Comparison plot saved")
 
 
 def main():
