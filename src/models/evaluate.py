@@ -16,7 +16,6 @@ FEATURE_COLS = [
 
 
 def compute_predictions(model, X, y, minutes, scaler=None):
-    """Run model on X (scaling first if scaler given). Return DataFrame: minute, y_true, y_prob, y_pred."""
     if scaler is not None:
         X_in = scaler.transform(X)
     else:
@@ -32,14 +31,13 @@ def compute_predictions(model, X, y, minutes, scaler=None):
 
 
 def report_metrics(preds, model_name):
-    """Print + return overall log loss and accuracy."""
     ll = log_loss(preds["y_true"], preds["y_prob"])
     acc = accuracy_score(preds["y_true"], preds["y_pred"])
     print(f"{model_name}: \nLog Loss: {ll}\nAccuracy: {acc}")
     return (ll, acc)
 
 def plot_by_minute(preds, model_name):
-    """Bucket by minute (per-min to 35, 36+ grouped), compute acc + log loss per bucket, save plots."""
+    """Bucket by minute (per-min to 35, 36+ grouped), compute acc + log loss per bucket."""
     preds = preds.copy()
     preds["bucket"] = preds["minute"].clip(upper=36)
 
@@ -92,7 +90,6 @@ def plot_calibration(preds, model_name, n_bins=10):
 
 
 def feature_importance(xgb_model, feature_names):
-    """Extract + display XGBoost feature importances."""
     importances = xgb_model.feature_importances_
     fi = pd.DataFrame({"feature": feature_names, "importance": importances})
     fi = fi.sort_values("importance", ascending=False)

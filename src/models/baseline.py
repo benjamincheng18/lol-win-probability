@@ -1,6 +1,7 @@
 import os
 import joblib
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -17,19 +18,15 @@ LABEL_COL = "won"
 
 
 def data_preparation(df, test_size=0.2, random_state=42):
-    """
-    Split by match (not row) into train/test, then separate features (X) and label (y).
-    Returns X_train, X_test, y_train, y_test.
-    """
     match_ids = df["match_id"].unique()
     train_ids, test_ids = train_test_split(match_ids, test_size=test_size, random_state=random_state)
     train_df = df[df["match_id"].isin(train_ids)]
     test_df  = df[df["match_id"].isin(test_ids)]
     X_train = train_df[FEATURE_COLS]
     y_train = train_df[LABEL_COL]
-    X_test = test_df[FEATURE_COLS]
-    y_test = test_df[LABEL_COL]
-    return X_train, X_test, y_train, y_test
+    X_test  = test_df[FEATURE_COLS]
+    y_test  = test_df[LABEL_COL]
+    return X_train, X_test, y_train, y_test, train_ids, test_ids
 
 
 def train_logistic(X_train, y_train):
@@ -52,7 +49,7 @@ def train_xgboost(X_train, y_train):
 
 def main():
     df = pd.read_csv(FEATURES_PATH)
-    X_train, X_test, y_train, y_test = data_preparation(df)
+    X_train, X_test, y_train, y_test, train_ids, test_ids = data_preparation(df)
 
     logreg, scaler = train_logistic(X_train, y_train)
     xgb = train_xgboost(X_train, y_train)
@@ -62,12 +59,15 @@ def main():
     joblib.dump(scaler, f"{MODEL_DIR}/scaler.joblib")
     joblib.dump(xgb, f"{MODEL_DIR}/xgboost.joblib")
 
-    # save the test split so Module 4 evaluates on the identical matches
     X_test.to_csv(f"{MODEL_DIR}/X_test.csv", index=False)
     y_test.to_csv(f"{MODEL_DIR}/y_test.csv", index=False)
 
+    # NEW: save the split match ids so downstream modules reuse the identical split
+    np.save(f"{MODEL_DIR}/train_ids.npy", train_ids)
+    np.save(f"{MODEL_DIR}/test_ids.npy", test_ids)
+
     print(f"Trained on {len(X_train)} rows, test set {len(X_test)} rows")
-    print("Models + scaler + test split saved")
+    print("Models + scaler + test split + split ids saved")
 
 
 if __name__ == "__main__":

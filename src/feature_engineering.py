@@ -11,7 +11,6 @@ TEAM_200_IDS = [str(i) for i in range(6, 11)]   # participants 6-10
 
 
 def compute_frame_diffs(participant_frames):
-    """Given one frame's participantFrames dict, return team-100-minus-team-200 diffs."""
     def team_sum(ids, key):
         return sum(participant_frames[i][key] for i in ids)
 
@@ -90,7 +89,6 @@ def process_match(match_id, winner_team):
 
 
 def build_feature_table():
-    """Loop over all matches in the manifest, accumulate rows, save one flat CSV."""
     manifest = pd.read_csv(MANIFEST_PATH)
 
     all_rows = []

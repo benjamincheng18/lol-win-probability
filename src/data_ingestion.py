@@ -29,7 +29,6 @@ def get_seed_puuids(queue="RANKED_SOLO_5x5"):
 
 
 def get_match_ids_for_puuid(puuid, count=20, queue=420):
-    """Fetch recent ranked solo match IDs for a given puuid. Returns [] on failure."""
     url = f"https://{REGION_ROUTING}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
     params = {"queue": queue, "count": count}
     result = safe_request(url, params=params)
@@ -37,7 +36,6 @@ def get_match_ids_for_puuid(puuid, count=20, queue=420):
 
 
 def safe_request(url, params=None, max_retries=5):
-    """Rate-limit-aware GET request with exponential backoff on 429."""
     headers = {"X-Riot-Token": API_KEY}
 
     for attempt in range(max_retries):
@@ -68,7 +66,6 @@ def safe_request(url, params=None, max_retries=5):
 
 
 def fetch_and_cache_match(match_id):
-    """Fetch match detail + timeline, cache both as raw JSON. Skip if already cached or on failure."""
     detail_path = f"{RAW_DIR}/{match_id}_detail.json"
     timeline_path = f"{RAW_DIR}/{match_id}_timeline.json"
 
@@ -96,7 +93,6 @@ def fetch_and_cache_match(match_id):
 
 
 def load_checkpoint():
-    """Return (match_ids set, processed_puuids set) from disk, or empty sets if none."""
     if not os.path.exists(CHECKPOINT_PATH):
         return set(), set()
     with open(CHECKPOINT_PATH) as f:
@@ -145,10 +141,6 @@ def snowball_match_ids(seed_puuids, target_count=5000, matches_per_player=20,
 
 
 def build_manifest(match_ids):
-    """
-    Given match IDs (already cached via fetch_and_cache_match), build a flat
-    manifest dataframe and save to MANIFEST_PATH.
-    """
     rows = []
 
     for match_id in match_ids:
